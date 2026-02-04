@@ -374,7 +374,14 @@ Reuse existing patterns from the retrieved snippets.
 ## 🧪 Models
 
 | Component | Model                            |
-| ----Expected Results
+| --------- | -------------------------------- |
+| Embedding | `nomic-ai/nomic-embed-text-v1.5` |
+| Dimension | 768                              |
+| Provider  | fastembed (ONNX, CPU)            |
+
+---
+
+## 🎉 Expected Results
 
 Once configured, GitHub Copilot can:
 
@@ -383,19 +390,6 @@ Once configured, GitHub Copilot can:
 ✅ **Reuse existing code** instead of generating new variants  
 ✅ **Reduce hallucinations** by referencing actual code  
 ✅ **Provide contextually relevant suggestions** based on your codebase
-
----
-
-## 🎨 Why Two Different Dockerfiles?
-
-The two Dockerfiles are **not duplicates**. They represent **two completely different deployment modes** for different use cases:
-- Remember the entire codebase
-- Understand architecture
-- Reuse code
-- Reduce hallucinations
-
-
-The two Dockerfiles are **not duplicates**. They represent **two different deployment modes**.
 
 ---
 
@@ -481,11 +475,11 @@ docker build -f Dockerfile.stdio -t mcp-qdrant .
 
 Called via `mcp.json`:
 
-```jsonfastembed-cache:/tmp/fastembed_cach
+```json
 "command": "docker",
 "args": [
   "run","--rm","-i",
-  "-v","hf-cache:/root/.cache/huggingface",
+  "-v","fastembed-cache:/tmp/fastembed_cache",
   "--network","host",
   "-e","QDRANT_URL=http://host.docker.internal:6333",
   "-e","COLLECTION_NAME=copilot-codebase",
@@ -502,6 +496,10 @@ Called via `mcp.json`:
 | --------- | ------------ | ------- | ------------------------ |
 | **SSE**   | HTTP `/sse`  | Network | Cursor, Windsurf, Claude |
 | **STDIO** | stdin/stdout | Local   | VS Code Copilot          |
+
+---
+
+## 🧩 Troubleshooting
 
 ### Tools Not Appearing in Copilot
 
@@ -583,10 +581,6 @@ If it's slow **every time**, see "Container Keeps Re-downloading Models" above.
 - Ensure volume exists: `docker volume ls | grep fastembed-cache`
 - Recreate volume: `docker volume rm fastembed-cache && docker volume create fastembed-cache`
 - Check Docker has necessary permissions on your system
-
-- **Tools not showing up**: Restart VS Code and check Copilot Chat → ⚙ → **Tools**.
-- **Linux networking issues**: Replace `host.docker.internal` with `localhost`.
-- **Slow first run**: The embedding model downloads on first use; allow extra time.
 
 ---
 
