@@ -108,8 +108,166 @@ docker build -t mcp-qdrant .
 ### 3. Create Model Cache Volume
 
 ```bash
-docker volume create hf-cache
+docker volume create fastembed-cache
 ```
+
+---
+
+## 🧊 Model Cache (FastEmbed Reality Check)
+
+### ⚠️ ROOT CAUSE: FastEmbed Cache Location
+
+FastEmbed does **NOT** use `$HF_HOME` or `~/.cache/huggingface`.
+
+The **actual** cache location is:
+
+```
+/tmp/fastembed_cache
+```
+
+Full path example:
+
+```
+/tmp/fastembed_cache/models--nomic-ai--nomic-embed-text-v1.5/
+```
+
+### 🔥 Why Does the Model Keep Re-downloading?
+
+Because `/tmp` in Docker is **ephemeral (temporary storage)**:
+
+* Every container start → `/tmp` is wiped clean
+* FastEmbed doesn't find the cached model → re-downloads everything
+* Mounting volume to wrong path (e.g., `/root/.cache`) → doesn't help at all
+
+This explains why the model downloads repeatedly, consuming bandwidth and time unnecessarily.
+
+---
+
+## ✅ SOLUTION: Mount to `/tmp/fastembed_cache`
+
+To prevent model re-downloads on every container start:
+
+**Step 1:** Create a persistent volume:
+
+```bash
+docker volume create fastembed-cache
+```
+
+**Step 2:** Mount to the **correct** path:
+
+```bash
+-v fastembed-cache:/tmp/fastembed_cache
+```
+
+This ensures FastEmbed finds the cached model on subsequent starts.
+
+---
+
+## 📊 Cache Location Reference
+
+| Backend/Tool      | Cache Location               | Notes                           |
+| ----------------- | ---------------------------- | ------------------------------- |
+| **FastEmbed**     | **`/tmp/fastembed_cache`**   | **ACTUAL location (confirmed)** |
+| HuggingFace SDK   | `$HF_HOME` or `~/.cache/hf`  | Not used by fastembed           |
+| Old FastEmbed     | `~/.cache/fastembed`         | Legacy path, deprecated         |
+
+---
+
+## 🪟 Multiple VS Code Windows → Multiple Containers?
+
+If you use `docker run --rm` in `mcp.json`, **each VS Code window spawns a separate container instance**.
+
+### Solution (Optional, Advanced)
+
+Use a **named container** (without `--rm`) to maintain **one global shared instance** across all VS Code windows:
+
+```json
+"args": [
+  "run","-i",
+  "--name","mcp-qdrant-mcp",
+  "--restart","unless-stopped",
+
+  "-v","fastembed-cache:/tmp/fastembed_cache",
+
+  "--network","host",
+  "-e","QDRANT_URL=http://localhost:6333",
+  "-e","COLLECTION_NAME=copilot-codebase",
+  "-e","EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5",
+
+  "-e","TOOL_STORE_DESCRIPTION=Store reusable code snippets. Put code in metadata.code",
+  "-e","TOOL_FIND_DESCRIPTION=Search for relevant code snippets before generating new code",
+
+  "mcp-qdrant"
+]
+```
+
+**Benefits:**
+- Shared cache across all VS Code windows
+- Container persists between sessions
+- Faster startup (no container recreation)
+
+> If the container already exists and you need to recreate it:
+
+```bash
+docker rm -f mcp-qdrant-mcp
+```
+
+---
+
+## ⚠️ Important: MCP Argument Parsing
+
+Each Docker flag **must be a separate array element** in JSON:
+
+❌ **Wrong** (single string):
+
+```json
+"-v fastembed-cache:/tmp/fastembed_cache"
+```
+
+✅ **Correct** (separate elements):
+
+```json
+"-v","fastembed-cache:/tmp/fastembed_cache"
+```
+
+This is a common mistake that causes MCP to fail silently.
+
+---
+
+## 🧪 Verify Cache Persistence
+
+After the container is running, verify the cache is properly mounted:
+
+```bash
+docker exec -it <container-name> ls -lah /tmp/fastembed_cache
+```
+
+You should see the model directory:
+
+```
+models--nomic-ai--nomic-embed-text-v1.5/
+```
+
+Alternative: Inspect the volume directly:
+
+```bash
+docker volume inspect fastembed-cache
+```
+
+**Success indicator:** Restart the container → **no more** "Fetching 5 files" or "Downloading model" messages.
+
+---
+
+## 📌 Root Cause Summary
+
+| Issue                      | Explanation                                  |
+| -------------------------- | -------------------------------------------- |
+| FastEmbed cache location   | `/tmp/fastembed_cache` (NOT `$HF_HOME`)      |
+| Docker `/tmp` behavior     | Ephemeral storage, wiped on every restart    |
+| Wrong volume mount         | Mounting to `/root/.cache` has no effect     |
+| Solution                   | Mount persistent volume to `/tmp/fastembed_cache` |
+
+**Key Takeaway**: FastEmbed uses `/tmp/fastembed_cache`, **not** HuggingFace's cache directory. This is the critical detail often missed in documentation.
 
 ---
 
@@ -141,7 +299,7 @@ Role: **Read**
       "args": [
         "run","--rm","-i",
 
-        "-v","hf-cache:/root/.cache/huggingface",
+        "-v","fastembed-cache:/tmp/fastembed_cache",
 
         "--network","host",
         "-e","QDRANT_URL=http://host.docker.internal:6333",
@@ -216,17 +374,21 @@ Reuse existing patterns from the retrieved snippets.
 ## 🧪 Models
 
 | Component | Model                            |
-| --------- | -------------------------------- |
-| Embedding | `nomic-ai/nomic-embed-text-v1.5` |
-| Dimension | 768                              |
-| Provider  | fastembed (ONNX, CPU)            |
+| ----Expected Results
+
+Once configured, GitHub Copilot can:
+
+✅ **Remember your entire codebase** semantically  
+✅ **Understand project architecture** and patterns  
+✅ **Reuse existing code** instead of generating new variants  
+✅ **Reduce hallucinations** by referencing actual code  
+✅ **Provide contextually relevant suggestions** based on your codebase
 
 ---
 
-## 🎉 Result
+## 🎨 Why Two Different Dockerfiles?
 
-Copilot can now:
-
+The two Dockerfiles are **not duplicates**. They represent **two completely different deployment modes** for different use cases:
 - Remember the entire codebase
 - Understand architecture
 - Reuse code
@@ -319,7 +481,7 @@ docker build -f Dockerfile.stdio -t mcp-qdrant .
 
 Called via `mcp.json`:
 
-```json
+```jsonfastembed-cache:/tmp/fastembed_cach
 "command": "docker",
 "args": [
   "run","--rm","-i",
@@ -341,9 +503,86 @@ Called via `mcp.json`:
 | **SSE**   | HTTP `/sse`  | Network | Cursor, Windsurf, Claude |
 | **STDIO** | stdin/stdout | Local   | VS Code Copilot          |
 
+### Tools Not Appearing in Copilot
+
+**Symptoms:** `qdrant-find` and `qdrant-store` tools don't show up in Copilot Chat.
+
+**Solutions:**
+1. Close **all** VS Code windows completely (not just tabs)
+2. Reopen VS Code
+3. Open Copilot Chat → Click ⚙️ (gear icon) → **Tools**
+4. Verify the tools are listed
+
+If still not working:
+- Check `mcp.json` syntax (valid JSON)
+- Ensure the `mcp-qdrant` Docker image exists: `docker images | grep mcp-qdrant`
+- Check Docker is running: `docker ps`
+
 ---
 
-## 🧩 Troubleshooting
+### Container Keeps Re-downloading Models
+
+**Symptoms:** Every time you restart VS Code, the container downloads the embedding model again.
+
+**Cause:** Volume not mounted to correct path.
+
+**Solution:** Ensure `mcp.json` contains:
+```json
+"-v","fastembed-cache:/tmp/fastembed_cache"
+```
+
+**NOT** `~/.cache/huggingface` or any other path.
+
+---
+
+### Linux Networking Issues
+
+**Symptom:** Container can't connect to Qdrant on `host.docker.internal:6333`.
+
+**Cause:** `host.docker.internal` is Docker Desktop-specific (Mac/Windows).
+
+**Solution for Linux:** Replace `host.docker.internal` with `localhost` or `172.17.0.1`:
+
+```json
+"-e","QDRANT_URL=http://localhost:6333"
+```
+
+Or use Docker's host network mode (already configured in examples).
+
+---
+
+### Slow First Run
+
+**Expected behavior:** The first container start downloads the embedding model (~200MB for `nomic-embed-text-v1.5`).
+
+**Timeline:**
+- First run: 2-5 minutes (downloading)
+- Subsequent runs: <10 seconds (cached)
+
+If it's slow **every time**, see "Container Keeps Re-downloading Models" above.
+
+---
+
+### MCP Connection Errors
+
+**Symptoms:** Errors in VS Code Output panel mentioning MCP connection failures.
+
+**Check:**
+1. Docker container is running: `docker ps`
+2. Qdrant is accessible: `curl http://localhost:6333/collections`
+3. Check Docker logs: `docker logs <container-name>`
+4. Verify `mcp.json` argument formatting (each flag as separate array element)
+
+---
+
+### Permission Denied or Volume Errors
+
+**Symptom:** `Error: permission denied` when mounting volumes.
+
+**Solution:**
+- Ensure volume exists: `docker volume ls | grep fastembed-cache`
+- Recreate volume: `docker volume rm fastembed-cache && docker volume create fastembed-cache`
+- Check Docker has necessary permissions on your system
 
 - **Tools not showing up**: Restart VS Code and check Copilot Chat → ⚙ → **Tools**.
 - **Linux networking issues**: Replace `host.docker.internal` with `localhost`.
